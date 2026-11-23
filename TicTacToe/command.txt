@@ -1,0 +1,33 @@
+SimSet Robot1.Pick, Block1, 1
+> SpeedS 10
+> Move P0
+> SimSet ResetCollision
+> P101 = P201 :X(307) :Y(-51.00381) :Z(13.5)
+> P120 = P101 :Z(110)
+> SpeedS 10
+> Move P120
+> Move P101
+> SimSet Robot1.Place, Block1
+> Move P120
+> SimSet ResetCollision
+> P211 = P201 :Y(-155)
+> P115 = P211 :X(358) :Y(0) :Z(12)
+> SpeedS 10
+> Move P211 :Z(110)
+> Move P211
+> SimSet Robot1.Pick, token1, 1
+!!Error: 7776, Simulator. Could not find Object.
+> SimSet Robot1.Pick, Token1, 1
+> Move P211 :Z(110)
+P122 = LJM(P115 :Z(110), Here, 2)
+> P115 = LJM(P115, P122, 2)
+> SpeedS 10
+> Move P122
+> Move P115
+> SimSet Robot1.Place, token1
+!!Error: 7776, Simulator. Could not find Object.
+> SimSet Robot1.Place, Token1
+> Move P122
+> SimSet ResetCollision
+> 
+> 

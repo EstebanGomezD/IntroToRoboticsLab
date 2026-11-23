@@ -1,0 +1,471 @@
+' TIC TAC TOE - GUI BUILDER ADAPTER v0.4 / RC+ 7.5
+' Requires the existing v2.1 core and its appended TTT_HMI_Run function.
+' Create frmTTT and the controls listed in docs/controls.csv FIRST.
+' Bind events using docs/events.csv. Do not create duplicate handlers.
+' Sync ID 63 is reserved by this add-on for short GUI write operations.
+' GUI handlers submit requests; only the existing backend moves the robot.
+
+Global Boolean g_HMIActive
+Global Integer g_HMIMode, g_HMISelectedColumn, g_HMISelectedRow
+Global String g_HMIMessage$
+
+' Resolve the GUI form through its Load event sender.
+String m_HMIForm$
+
+Function frmTTT_Load(Sender$ As String)
+    m_HMIForm$ = Sender$
+    g_HMISelectedColumn = 1
+    g_HMISelectedRow = 1
+    Call TTT_HMI_Layout
+    Call TTT_HMI_Update
+    GSet m_HMIForm$.tmrRefresh.Interval, 250
+    GSet m_HMIForm$.tmrRefresh.Enabled, True
+Fend
+
+Function frmTTT_tmrRefresh_Tick(Sender$ As String)
+    Call TTT_HMI_Update
+Fend
+
+Function frmTTT_btnLogic_Click(Sender$ As String)
+    Call TTT_HMI_Start(1)
+Fend
+
+Function frmTTT_btnSim_Click(Sender$ As String)
+    Call TTT_HMI_Start(2)
+Fend
+
+Function frmTTT_btnX1_Click(Sender$ As String)
+    Call TTT_HMI_Select(1, 1)
+Fend
+Function frmTTT_btnX2_Click(Sender$ As String)
+    Call TTT_HMI_Select(1, 2)
+Fend
+Function frmTTT_btnX3_Click(Sender$ As String)
+    Call TTT_HMI_Select(1, 3)
+Fend
+Function frmTTT_btnY1_Click(Sender$ As String)
+    Call TTT_HMI_Select(2, 1)
+Fend
+Function frmTTT_btnY2_Click(Sender$ As String)
+    Call TTT_HMI_Select(2, 2)
+Fend
+Function frmTTT_btnY3_Click(Sender$ As String)
+    Call TTT_HMI_Select(2, 3)
+Fend
+
+Function frmTTT_btnConfirm_Click(Sender$ As String)
+    Call TTT_HMI_Submit(1)
+Fend
+Function frmTTT_btnCollect_Click(Sender$ As String)
+    Call TTT_HMI_Submit(2)
+Fend
+Function frmTTT_btnEnd_Click(Sender$ As String)
+    Call TTT_HMI_Submit(9)
+Fend
+Function frmTTT_btnClose_Click(Sender$ As String)
+    If TTT_HMI_CanStart() Then
+        GClose m_HMIForm$
+    EndIf
+Fend
+
+Function TTT_HMI_CanStart As Boolean
+    TTT_HMI_CanStart = False
+    If g_HMIActive Or g_Busy Or g_Ready Or g_Fault Then
+        Exit Function
+    EndIf
+    If g_MoveCount <> 0 Or EStopOn Then
+        Exit Function
+    EndIf
+    If TaskState(TTT_HMI_Run) <> 0 Then
+        Exit Function
+    EndIf
+    If TaskState(TTT_main) <> 0 Or TaskState(TTT_SimGame) <> 0 Then
+        Exit Function
+    EndIf
+    If TaskState(TTT_ReturnDemo) <> 0 Or TaskState(TTT_SetupSim) <> 0 Then
+        Exit Function
+    EndIf
+    TTT_HMI_CanStart = True
+Fend
+
+Function TTT_HMI_CanRequest As Boolean
+    Integer taskStatus
+    TTT_HMI_CanRequest = False
+    If Not g_HMIActive Or g_Fault Then
+        Exit Function
+    EndIf
+    If Not g_Ready Or g_Busy Or g_Request <> 0 Then
+        Exit Function
+    EndIf
+    If EStopOn Then
+        Exit Function
+    EndIf
+    taskStatus = TaskState(TTT_HMI_Run)
+    If taskStatus <> 1 And taskStatus <> 2 Then
+        Exit Function
+    EndIf
+    TTT_HMI_CanRequest = True
+Fend
+
+Function TTT_HMI_Start(mode As Integer)
+    Boolean locked
+    locked = False
+    OnErr GoTo startFault
+    SyncLock 63
+    locked = True
+    If TTT_HMI_CanStart() Then
+        g_HMIActive = True
+        g_HMIMode = mode
+        g_HMIMessage$ = "Starting session..."
+        g_Ready = False
+        g_Busy = True
+        g_Request = 0
+        Xqt TTT_HMI_Run(mode), Normal
+    EndIf
+    SyncUnlock 63
+    Exit Function
+startFault:
+    g_ControllerError = Err
+    If locked Then
+        SyncUnlock 63
+    EndIf
+    g_HMIActive = False
+    g_Fault = True
+    g_Ready = False
+    g_Busy = True
+    g_Request = 0
+    g_HMIMessage$ = "Unable to start. Check the Run Window."
+    Print "HMI XQT ERROR: ", g_ControllerError
+Fend
+
+Function TTT_HMI_Select(axis As Integer, value As Integer)
+    SyncLock 63
+    If TTT_HMI_CanRequest() And g_Result = 0 Then
+        If axis = 1 Then
+            g_HMISelectedColumn = value
+        ElseIf axis = 2 Then
+            g_HMISelectedRow = value
+        EndIf
+    EndIf
+    SyncUnlock 63
+Fend
+
+Function TTT_HMI_Submit(command As Integer)
+    Integer cell
+    SyncLock 63
+    If Not TTT_HMI_CanRequest() Then
+        SyncUnlock 63
+        Exit Function
+    EndIf
+    If command = 1 Then
+        If g_Result <> 0 Then
+            SyncUnlock 63
+            Exit Function
+        EndIf
+        If g_HMISelectedColumn < 1 Or g_HMISelectedColumn > 3 Then
+            SyncUnlock 63
+            Exit Function
+        EndIf
+        If g_HMISelectedRow < 1 Or g_HMISelectedRow > 3 Then
+            SyncUnlock 63
+            Exit Function
+        EndIf
+        cell = (g_HMISelectedRow - 1) * 3 + (4 - g_HMISelectedColumn)
+        If g_Board(cell) <> 0 Then
+            g_HMIMessage$ = "Cell occupied. Choose another cell."
+            SyncUnlock 63
+            Exit Function
+        EndIf
+    ElseIf command = 2 Then
+        If g_MoveCount = 0 Then
+            SyncUnlock 63
+            Exit Function
+        EndIf
+    ElseIf command = 9 Then
+        If g_MoveCount <> 0 Then
+            g_HMIMessage$ = "Clear the board before ending the session."
+            SyncUnlock 63
+            Exit Function
+        EndIf
+    Else
+        SyncUnlock 63
+        Exit Function
+    EndIf
+
+    ' Claim the mailbox before any GUI work. Publish the command LAST.
+    g_Ready = False
+    g_Busy = True
+    g_Column = 4 - g_HMISelectedColumn
+    g_Row = g_HMISelectedRow
+    g_HMIMessage$ = ""
+    g_Request = command
+    SyncUnlock 63
+Fend
+
+Function TTT_HMI_Update
+    Integer i, cell, taskStatus, viewRow, viewColumn
+    Boolean canStart, canRequest, canPlay, canCollect, canEnd
+    String control$, mark$, status$, error$, value$
+
+    canStart = TTT_HMI_CanStart()
+    canRequest = TTT_HMI_CanRequest()
+    canPlay = canRequest And g_Result = 0
+    GSet m_HMIForm$.btnLogic.Enabled, canStart
+    GSet m_HMIForm$.btnSim.Enabled, canStart
+    GSet m_HMIForm$.btnClose.Enabled, canStart
+    For i = 1 To 3
+        control$ = "btnX" + LTrim$(Str$(i))
+        GSet m_HMIForm$.control$.Enabled, canPlay
+        value$ = LTrim$(Str$(i))
+        If g_HMISelectedColumn = i Then
+            value$ = "[ " + value$ + " ]"
+        EndIf
+        GSet m_HMIForm$.control$.Text, value$
+        control$ = "btnY" + LTrim$(Str$(i))
+        GSet m_HMIForm$.control$.Enabled, canPlay
+        value$ = LTrim$(Str$(i))
+        If g_HMISelectedRow = i Then
+            value$ = "[ " + value$ + " ]"
+        EndIf
+        GSet m_HMIForm$.control$.Text, value$
+    Next i
+
+    cell = (g_HMISelectedRow - 1) * 3 + (4 - g_HMISelectedColumn)
+    If cell < 1 Or cell > 9 Then
+        canPlay = False
+    ElseIf g_Board(cell) <> 0 Then
+        canPlay = False
+    EndIf
+    GSet m_HMIForm$.btnConfirm.Enabled, canPlay
+    canCollect = canRequest And (g_MoveCount > 0)
+    canEnd = canRequest And (g_MoveCount = 0)
+    GSet m_HMIForm$.btnCollect.Enabled, canCollect
+    GSet m_HMIForm$.btnEnd.Enabled, canEnd
+    GSet m_HMIForm$.lblSelection.Text, "Column " + LTrim$(Str$(g_HMISelectedColumn)) + " / Row " + LTrim$(Str$(g_HMISelectedRow))
+    GSet m_HMIForm$.lblStock.Text, "Available: X=" + LTrim$(Str$(5 - g_UsedX)) + " / O=" + LTrim$(Str$(4 - g_UsedO))
+    If g_HMIMode = 2 Then
+        GSet m_HMIForm$.lblMode.Text, "MODE: VIRTUAL 3 SIMULATION - CAD motion"
+    ElseIf g_HMIMode = 1 Then
+        GSet m_HMIForm$.lblMode.Text, "MODE: LOGIC TEST - no motion"
+    Else
+        GSet m_HMIForm$.lblMode.Text, "Select a mode to start."
+    EndIf
+    If Not g_HMIActive Then
+        value$ = "No active session"
+    ElseIf g_Result = 1 Then
+        value$ = "X wins - clear the board"
+    ElseIf g_Result = 2 Then
+        value$ = "O wins - clear the board"
+    ElseIf g_Result = 3 Then
+        value$ = "Draw - clear the board"
+    ElseIf g_Player = 1 Then
+        value$ = "Turn: X / block"
+    Else
+        value$ = "Turn: O / token"
+    EndIf
+    GSet m_HMIForm$.lblTurn.Text, value$
+
+    ' Match the simulator view: display columns 1,2,3 use robot columns 3,2,1.
+    For viewRow = 1 To 3
+        For viewColumn = 1 To 3
+            i = (viewRow - 1) * 3 + viewColumn
+            cell = (viewRow - 1) * 3 + (4 - viewColumn)
+            control$ = "lblCell" + LTrim$(Str$(i))
+            mark$ = "-"
+            If g_Board(cell) = 1 Then
+                mark$ = "X"
+            ElseIf g_Board(cell) = 2 Then
+                mark$ = "O"
+            EndIf
+            GSet m_HMIForm$.control$.Text, mark$
+        Next viewColumn
+    Next viewRow
+
+    error$ = ""
+    If g_LastError = 1 Then
+        error$ = "Coordinates out of range."
+    ElseIf g_LastError = 2 Then
+        error$ = "Cell occupied."
+    ElseIf g_LastError = 3 Then
+        error$ = "Game over. Clear the board."
+    ElseIf g_LastError = 4 Then
+        error$ = "No pieces left for this player."
+    ElseIf g_LastError = 5 Then
+        error$ = "Invalid command."
+    ElseIf g_LastError = 6 Then
+        error$ = "Clear the board before ending the session."
+    EndIf
+    taskStatus = TaskState(TTT_HMI_Run)
+    If EStopOn Then
+        status$ = "Emergency stop active."
+    ElseIf g_Fault Then
+        status$ = "Epson error " + LTrim$(Str$(g_ControllerError)) + ". Check the Run Window."
+    ElseIf g_HMIActive And taskStatus = 0 Then
+        status$ = "Task stopped. Check the pieces before restarting."
+    ElseIf taskStatus = 3 Or taskStatus = 4 Then
+        status$ = "Session paused. Use the RC+ controls."
+    ElseIf taskStatus = 5 Then
+        status$ = "Task error. Check the Run Window."
+    ElseIf g_Busy Then
+        status$ = "Robot busy / processing request..."
+    ElseIf g_HMIMessage$ <> "" Then
+        status$ = g_HMIMessage$
+    ElseIf error$ <> "" Then
+        status$ = error$
+    ElseIf canRequest Then
+        If g_Result <> 0 Then
+            status$ = "Game over. Clear the board."
+        ElseIf Not canPlay Then
+            status$ = "Cell occupied. Select another cell."
+        Else
+            status$ = "Ready to confirm a move."
+        EndIf
+    Else
+        status$ = "Ready to start a session."
+    EndIf
+    GSet m_HMIForm$.lblStatus.Text, status$
+Fend
+
+' Layout helpers are generated below from docs/controls.csv.
+Function TTT_HMI_Layout
+    GSet m_HMIForm$.Text, "Tic Tac Toe | Epson GUI Builder"
+    GSet m_HMIForm$.Width, 900
+    GSet m_HMIForm$.Height, 750
+    GSet m_HMIForm$.ControlBox, False
+    GSet m_HMIForm$.StartPosition, 1
+    Call TTT_HMI_Place("lblTitle", 24, 20, 800, 36)
+    GSet m_HMIForm$.lblTitle.Text, "TIC TAC TOE"
+    GSet m_HMIForm$.lblTitle.FontSize, 22
+    GSet m_HMIForm$.lblTitle.TextAlign, 4
+    Call TTT_HMI_Place("lblMode", 24, 66, 810, 24)
+    GSet m_HMIForm$.lblMode.Text, "Select a mode to start."
+    GSet m_HMIForm$.lblMode.FontSize, 11
+    GSet m_HMIForm$.lblMode.TextAlign, 4
+    Call TTT_HMI_Place("lblTurn", 24, 105, 395, 30)
+    GSet m_HMIForm$.lblTurn.Text, "No active session"
+    GSet m_HMIForm$.lblTurn.FontSize, 15
+    GSet m_HMIForm$.lblTurn.TextAlign, 4
+    Call TTT_HMI_Place("lblStock", 450, 105, 380, 30)
+    GSet m_HMIForm$.lblStock.Text, "Available: X=5 / O=4"
+    GSet m_HMIForm$.lblStock.FontSize, 12
+    GSet m_HMIForm$.lblStock.TextAlign, 4
+    Call TTT_HMI_Place("lblX", 24, 155, 350, 24)
+    GSet m_HMIForm$.lblX.Text, "COLUMN X"
+    GSet m_HMIForm$.lblX.FontSize, 12
+    GSet m_HMIForm$.lblX.TextAlign, 4
+    Call TTT_HMI_Place("lblY", 24, 255, 350, 24)
+    GSet m_HMIForm$.lblY.Text, "ROW Y"
+    GSet m_HMIForm$.lblY.FontSize, 12
+    GSet m_HMIForm$.lblY.TextAlign, 4
+    Call TTT_HMI_Place("btnX1", 24, 190, 90, 44)
+    GSet m_HMIForm$.btnX1.Text, "1"
+    GSet m_HMIForm$.btnX1.FontSize, 14
+    Call TTT_HMI_Place("btnX2", 125, 190, 90, 44)
+    GSet m_HMIForm$.btnX2.Text, "2"
+    GSet m_HMIForm$.btnX2.FontSize, 14
+    Call TTT_HMI_Place("btnX3", 226, 190, 90, 44)
+    GSet m_HMIForm$.btnX3.Text, "3"
+    GSet m_HMIForm$.btnX3.FontSize, 14
+    Call TTT_HMI_Place("btnY1", 24, 290, 90, 44)
+    GSet m_HMIForm$.btnY1.Text, "1"
+    GSet m_HMIForm$.btnY1.FontSize, 14
+    Call TTT_HMI_Place("btnY2", 125, 290, 90, 44)
+    GSet m_HMIForm$.btnY2.Text, "2"
+    GSet m_HMIForm$.btnY2.FontSize, 14
+    Call TTT_HMI_Place("btnY3", 226, 290, 90, 44)
+    GSet m_HMIForm$.btnY3.Text, "3"
+    GSet m_HMIForm$.btnY3.FontSize, 14
+    Call TTT_HMI_Place("lblSelection", 24, 350, 390, 34)
+    GSet m_HMIForm$.lblSelection.Text, "Column 1 / Row 1"
+    GSet m_HMIForm$.lblSelection.FontSize, 13
+    GSet m_HMIForm$.lblSelection.TextAlign, 4
+    Call TTT_HMI_Place("btnConfirm", 24, 400, 300, 50)
+    GSet m_HMIForm$.btnConfirm.Text, "Confirm move"
+    GSet m_HMIForm$.btnConfirm.FontSize, 13
+    Call TTT_HMI_Place("btnCollect", 24, 462, 300, 50)
+    GSet m_HMIForm$.btnCollect.Text, "Clear board"
+    GSet m_HMIForm$.btnCollect.FontSize, 13
+    Call TTT_HMI_Place("btnLogic", 24, 530, 180, 42)
+    GSet m_HMIForm$.btnLogic.Text, "Start logic mode"
+    GSet m_HMIForm$.btnLogic.FontSize, 11
+    Call TTT_HMI_Place("btnSim", 217, 530, 180, 42)
+    GSet m_HMIForm$.btnSim.Text, "Start simulation"
+    GSet m_HMIForm$.btnSim.FontSize, 11
+    Call TTT_HMI_Place("btnEnd", 24, 590, 180, 42)
+    GSet m_HMIForm$.btnEnd.Text, "End session"
+    GSet m_HMIForm$.btnEnd.FontSize, 11
+    Call TTT_HMI_Place("btnClose", 217, 590, 180, 42)
+    GSet m_HMIForm$.btnClose.Text, "Close window"
+    GSet m_HMIForm$.btnClose.FontSize, 11
+    Call TTT_HMI_Place("lblBoard", 450, 155, 380, 24)
+    GSet m_HMIForm$.lblBoard.Text, "BOARD - row 1 at the top"
+    GSet m_HMIForm$.lblBoard.FontSize, 12
+    GSet m_HMIForm$.lblBoard.TextAlign, 4
+    Call TTT_HMI_Place("lblCell1", 450, 190, 108, 108)
+    GSet m_HMIForm$.lblCell1.Text, "-"
+    GSet m_HMIForm$.lblCell1.FontSize, 32
+    GSet m_HMIForm$.lblCell1.TextAlign, 5
+    GSet m_HMIForm$.lblCell1.BorderStyle, 1
+    Call TTT_HMI_Place("lblCell2", 570, 190, 108, 108)
+    GSet m_HMIForm$.lblCell2.Text, "-"
+    GSet m_HMIForm$.lblCell2.FontSize, 32
+    GSet m_HMIForm$.lblCell2.TextAlign, 5
+    GSet m_HMIForm$.lblCell2.BorderStyle, 1
+    Call TTT_HMI_Place("lblCell3", 690, 190, 108, 108)
+    GSet m_HMIForm$.lblCell3.Text, "-"
+    GSet m_HMIForm$.lblCell3.FontSize, 32
+    GSet m_HMIForm$.lblCell3.TextAlign, 5
+    GSet m_HMIForm$.lblCell3.BorderStyle, 1
+    Call TTT_HMI_Place("lblCell4", 450, 310, 108, 108)
+    GSet m_HMIForm$.lblCell4.Text, "-"
+    GSet m_HMIForm$.lblCell4.FontSize, 32
+    GSet m_HMIForm$.lblCell4.TextAlign, 5
+    GSet m_HMIForm$.lblCell4.BorderStyle, 1
+    Call TTT_HMI_Place("lblCell5", 570, 310, 108, 108)
+    GSet m_HMIForm$.lblCell5.Text, "-"
+    GSet m_HMIForm$.lblCell5.FontSize, 32
+    GSet m_HMIForm$.lblCell5.TextAlign, 5
+    GSet m_HMIForm$.lblCell5.BorderStyle, 1
+    Call TTT_HMI_Place("lblCell6", 690, 310, 108, 108)
+    GSet m_HMIForm$.lblCell6.Text, "-"
+    GSet m_HMIForm$.lblCell6.FontSize, 32
+    GSet m_HMIForm$.lblCell6.TextAlign, 5
+    GSet m_HMIForm$.lblCell6.BorderStyle, 1
+    Call TTT_HMI_Place("lblCell7", 450, 430, 108, 108)
+    GSet m_HMIForm$.lblCell7.Text, "-"
+    GSet m_HMIForm$.lblCell7.FontSize, 32
+    GSet m_HMIForm$.lblCell7.TextAlign, 5
+    GSet m_HMIForm$.lblCell7.BorderStyle, 1
+    Call TTT_HMI_Place("lblCell8", 570, 430, 108, 108)
+    GSet m_HMIForm$.lblCell8.Text, "-"
+    GSet m_HMIForm$.lblCell8.FontSize, 32
+    GSet m_HMIForm$.lblCell8.TextAlign, 5
+    GSet m_HMIForm$.lblCell8.BorderStyle, 1
+    Call TTT_HMI_Place("lblCell9", 690, 430, 108, 108)
+    GSet m_HMIForm$.lblCell9.Text, "-"
+    GSet m_HMIForm$.lblCell9.FontSize, 32
+    GSet m_HMIForm$.lblCell9.TextAlign, 5
+    GSet m_HMIForm$.lblCell9.BorderStyle, 1
+    Call TTT_HMI_Place("lblLegend", 450, 550, 380, 28)
+    GSet m_HMIForm$.lblLegend.Text, "X = block / O = token"
+    GSet m_HMIForm$.lblLegend.FontSize, 12
+    GSet m_HMIForm$.lblLegend.TextAlign, 4
+    Call TTT_HMI_Place("lblNote", 450, 590, 380, 45)
+    GSet m_HMIForm$.lblNote.Text, "Columns: left to right. Rows: top to bottom."
+    GSet m_HMIForm$.lblNote.FontSize, 10
+    GSet m_HMIForm$.lblNote.TextAlign, 4
+    Call TTT_HMI_Place("lblStatus", 24, 655, 806, 45)
+    GSet m_HMIForm$.lblStatus.Text, "Ready to start a session."
+    GSet m_HMIForm$.lblStatus.FontSize, 12
+    GSet m_HMIForm$.lblStatus.TextAlign, 4
+Fend
+
+Function TTT_HMI_Place(control$ As String, x As Integer, y As Integer, w As Integer, h As Integer)
+    GSet m_HMIForm$.control$.Left, x
+    GSet m_HMIForm$.control$.Top, y
+    GSet m_HMIForm$.control$.Width, w
+    GSet m_HMIForm$.control$.Height, h
+    GSet m_HMIForm$.control$.FontName, "Microsoft Sans Serif"
+Fend
+
+
