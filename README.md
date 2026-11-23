@@ -10,4 +10,4 @@ The system will include a start/stop button, and when a match is finished the ro
 - [ ] Print the 3D design
 - [x] Select of positions on the workspace, calibration
 - [ ] Program the motion of the hand. Includes the motion from tray to any position in the grid and back to the tray. 
-- [ ] HMI (or I/O box) connection to the main program. Make the program respond to the actions of the HMI (or I/O box): selection of pieces, selection of cell, reset/accept buttons, restart/end. 
+- [ ] HMI (or GUI box) connection to the main program. Make the program respond to the actions of the HMI (or GUI box): selection of pieces, selection of cell, reset/accept buttons, restart/end. 
